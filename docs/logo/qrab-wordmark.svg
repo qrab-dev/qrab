@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 175 72" width="175" height="72" role="img" aria-label="qrab">
+  <title>qrab</title>
+  <g fill="none" stroke="#1C1F26" stroke-width="8" stroke-linecap="round">
+    <circle cx="23" cy="37" r="17"/>
+    <path d="M40 20 V68"/>
+    <path d="M58 20 V54 M58 37 A17 17 0 0 1 75 20"/>
+    <circle cx="100" cy="37" r="17"/>
+    <path d="M117 20 V54"/>
+    <path d="M135 4 V54"/>
+    <circle cx="152" cy="37" r="17"/>
+  </g>
+</svg>

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/qrab-lockup-dark.svg">
+    <img alt="qrab" src="docs/logo/qrab-lockup.svg" width="320">
+  </picture>
+</p>
+
 # qrab
 
 qrab runs QEMU virtual machines on Kubernetes and gives each VM the

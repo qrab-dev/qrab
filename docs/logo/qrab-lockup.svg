@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 245 72" width="245" height="72" role="img" aria-label="qrab">
+  <title>qrab</title>
+  <g fill="none" stroke="#E4572E" stroke-width="8" stroke-linecap="round">
+    <circle cx="23" cy="37" r="17"/>
+    <path d="M35 49 L42 56"/>
+  </g>
+  <path fill="#E4572E" d="M45 59 L53.46 62.08 A9 9 0 1 0 48.08 67.46 Z"/>
+  <g fill="none" stroke="#1C1F26" stroke-width="8" stroke-linecap="round">
+    <circle cx="93" cy="37" r="17"/>
+    <path d="M110 20 V68"/>
+    <path d="M128 20 V54 M128 37 A17 17 0 0 1 145 20"/>
+    <circle cx="170" cy="37" r="17"/>
+    <path d="M187 20 V54"/>
+    <path d="M205 4 V54"/>
+    <circle cx="222" cy="37" r="17"/>
+  </g>
+</svg>

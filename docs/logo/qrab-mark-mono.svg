@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="qrab">
+  <title>qrab</title>
+  <g fill="none" stroke="#1C1F26" stroke-width="8" stroke-linecap="round">
+    <circle cx="27" cy="27" r="17"/>
+    <path d="M39 39 L46 46"/>
+  </g>
+  <path fill="#1C1F26" d="M49 49 L57.46 52.08 A9 9 0 1 0 52.08 57.46 Z"/>
+</svg>
