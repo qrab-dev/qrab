@@ -1,0 +1,12 @@
+# The Rust image builds (contrib/images/build.sh) use the repository root as
+# their context but copy only the workspace and contrib/: everything else,
+# such as .git, target/, vendor/qemu and local checkouts, stays out of the
+# context.
+*
+!Cargo.toml
+!Cargo.lock
+!projects
+!contrib
+__pycache__
+**/__pycache__
+**/*.pyc

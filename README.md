@@ -27,6 +27,9 @@ notice and there are no releases yet. qrab is preparing to apply to the
 [CNCF](https://www.cncf.io/) as a Sandbox project. See the
 [roadmap](ROADMAP.md) for what comes next. Website: <https://qrab.dev>.
 
+**Try it without Kubernetes:** [docs/standalone.md](docs/standalone.md) runs
+one VM, supervised by `qrab-manager`, under podman or Docker Compose.
+
 ## Project
 
 | | |

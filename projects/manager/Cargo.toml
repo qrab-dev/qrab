@@ -8,3 +8,40 @@ publish = false
 
 [lib]
 name = "manager"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+x509-cert = { version = "0.2", features = ["std"] }
+tempfile = { workspace = true }
+# Writes the cloud-init NoCloud seed volume; no clock, so timestamps are fixed.
+fatfs = { version = "0.3.6", default-features = false, features = ["std", "alloc"] }
+
+[dependencies.qapi]
+workspace = true
+
+[dependencies.qapi-protocol]
+workspace = true
+
+# Wire types for the namespaced qrab guest-agent commands.
+[dependencies.qrab-guest-agent]
+workspace = true
+
+[dependencies.rustix]
+workspace = true
+features = ["fs", "process"]
+
+[dependencies.tokio]
+workspace = true
+features = ["rt", "macros", "process", "time", "signal", "sync", "net", "io-util"]
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["io-util"]
+
+# The mock QMP and QGA sessions of the tests.
+[dev-dependencies.qapi-protocol]
+workspace = true
+features = ["mock"]
