@@ -1,0 +1,12 @@
+# KVM acceleration for the standalone VM: add this file after compose.yaml
+# (`-f compose.yaml -f compose.kvm.yaml`) and set "accelerator": "kvm" in
+# vm.json. See docs/standalone.md.
+services:
+  manager:
+    devices:
+      - /dev/kvm
+    # /dev/kvm is usually 0660 root:kvm. Rootless podman passes the caller's
+    # own groups with keep-groups; with Docker, set QRAB_KVM_GROUP to the
+    # host's numeric kvm GID (getent group kvm).
+    group_add:
+      - ${QRAB_KVM_GROUP:-keep-groups}

@@ -1,0 +1,80 @@
+# One qrab VM without Kubernetes, from the manager image. See
+# docs/standalone.md. Works with `podman-compose` and `docker compose`.
+#
+# Copy this directory, put the settings in a `.env` file beside it (from
+# env.example) and run `podman-compose up -d` (or `docker compose up -d`).
+#
+# - manager runs QEMU and swtpm with no network at all (the VM has no NIC) and
+#   serves its control socket on the shared `control` volume.
+# - init gives the two volumes to the image's user (UID/GID 10001) and exits.
+
+name: qrab
+
+# There is no default: docs/standalone.md describes building the image.
+x-image: &image ${QRAB_MANAGER_IMAGE:?set QRAB_MANAGER_IMAGE to the manager image, see docs/standalone.md}
+
+# Read-only root filesystem, no capabilities, no privilege escalation.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges]
+
+# podman-compose would otherwise put every service into one pod, whose shared
+# network namespace conflicts with each service's own network mode.
+x-podman:
+  in_pod: false
+
+services:
+  init:
+    image: *image
+    user: "0:0"
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - chown 10001:10001 /var/lib/qrab /run/qrab-control && chmod 0700 /var/lib/qrab /run/qrab-control
+    volumes:
+      - state:/var/lib/qrab
+      - control:/run/qrab-control
+
+  manager:
+    <<: *hardening
+    image: *image
+    # The VM has no NIC and the manager opens no TCP listener.
+    network_mode: none
+    command: ["run", "--config", "/etc/qrab/vm.json"]
+    environment:
+      # Report the whole container's resource usage, not only the manager's.
+      QRAB_RESOURCE_SCOPE: container
+      # The image reference that the configuration view reports.
+      QRAB_IMAGE: *image
+    volumes:
+      - ${QRAB_VM_CONFIG:-./vm.json}:/etc/qrab/vm.json:ro,z
+      - state:/var/lib/qrab
+      - control:/run/qrab-control
+    # Runtime sockets and the session directory, private to the manager; the
+    # manager creates its own 0700 directories inside.
+    tmpfs:
+      - /run/qrab:size=64m,mode=1777
+      - /tmp:size=64m,mode=1777
+    # Live semantics: a paused or powered-off VM stays healthy so it can be
+    # resumed or powered on.
+    healthcheck:
+      test: ["CMD", "qrab-manager", "live", "--config", "/etc/qrab/vm.json"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+      start_period: 90s
+    # SIGTERM asks the guest to shut down (shutdown_grace_secs), then QEMU and
+    # swtpm are stopped and the state is flushed.
+    stop_grace_period: 20s
+    restart: on-failure
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+volumes:
+  # The VM's persistent state: UEFI variables, the swtpm TPM and the state
+  # lease. Removing it gives the VM a new TPM identity.
+  state:
+  # The manager's control socket, reached only by the services that mount it.
+  control:
