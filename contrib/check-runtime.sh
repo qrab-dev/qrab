@@ -6,8 +6,12 @@
 #   test    cargo test
 #   clippy  strict Clippy (-D warnings)
 #   deny    cargo deny licenses
+#   packages
+#           each package built alone (cargo check), so the workspace's
+#           feature unification cannot hide a missing feature edge
 # Without a stage it runs all of them, deny only when cargo-deny is installed.
-# CI runs one stage per required check (.github/workflows/ci.yml).
+# CI runs fmt, test, clippy and deny, one stage per required check
+# (.github/workflows/ci.yml); packages runs locally.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 # The workspace's packages. Those with default features are also checked
@@ -41,17 +45,25 @@ stage_clippy() {
     done
 }
 
+stage_packages() {
+    for package in "${packages[@]}"; do
+        cargo check --locked -p "$package" --all-targets
+    done
+}
+
 stage_deny() {
     cargo deny --locked check licenses
 }
 
 if (($# == 0)); then
     set -- fmt test clippy
+    set -- "$@" packages
     if command -v cargo-deny >/dev/null 2>&1; then set -- "$@" deny; fi
 fi
 for stage; do
     case $stage in
         fmt|test|clippy|deny) "stage_$stage" ;;
-        *) printf 'unknown stage %s (fmt, test, clippy or deny)\n' "$stage" >&2; exit 2 ;;
+        packages) stage_packages ;;
+        *) printf 'unknown stage %s (fmt, test, clippy, deny or packages)\n' "$stage" >&2; exit 2 ;;
     esac
 done

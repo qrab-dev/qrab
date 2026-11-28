@@ -37,6 +37,11 @@ allow = [
 # The allow list mirrors the CNCF policy verbatim, so some entries are unused.
 unused-allowed-license = "allow"
 confidence-threshold = 0.93
+exceptions = [
+    # pending: docs/license-exceptions.md#unicode-30
+    # ("(MIT OR Apache-2.0) AND Unicode-3.0")
+    { crate = "unicode-ident", allow = ["Unicode-3.0"] },
+]
 
 # As in `cargo audit`, unmaintained notices are reviewed but do not fail the
 # check.
