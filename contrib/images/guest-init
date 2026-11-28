@@ -1,0 +1,102 @@
+#!/bin/sh
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+printf '\nQRAB_GUEST_BOOTED\n'
+printf 'guest kernel: '; uname -r
+printf 'guest uptime: '; cat /proc/uptime
+while read -r module; do insmod "$module"; done </etc/qrab-modules
+# EFI runtime variables have a separate filesystem; sysfs alone exposes no
+# Secure Boot databases or BootNext values. Mount it before the agent starts.
+if [ -d /sys/firmware/efi ]; then
+    if grep -qs ' /sys/firmware/efi/efivars efivarfs ' /proc/mounts || mount -t efivarfs efivarfs /sys/firmware/efi/efivars; then
+        echo QRAB_EFIVARFS_READY
+    else
+        echo QRAB_EFIVARFS_UNAVAILABLE >&2
+    fi
+fi
+# Explicit freeze-test fixture only. The host test formats its own 64 MiB
+# file before launch. Never format here, or mount an ordinary guest disk.
+# Mount before starting the agent so a connected agent has the test filesystem.
+case " $(cat /proc/cmdline) " in
+    *" qrab.freeze_fixture=9f908867-3cac-45c8-8586-38166fb10f00 "*)
+        attempt=0
+        while [ ! -b /dev/vda ] && [ "$attempt" -lt 50 ]; do
+            sleep 0.1
+            attempt=$((attempt + 1))
+        done
+        if [ "$(/usr/sbin/blockdev --getsize64 /dev/vda 2>/dev/null)" = 67108864 ] &&
+           [ "$(/usr/sbin/blkid -s TYPE -o value /dev/vda 2>/dev/null)" = ext4 ] &&
+           [ "$(/usr/sbin/blkid -s LABEL -o value /dev/vda 2>/dev/null)" = QRAB-FREEZE ] &&
+           [ "$(/usr/sbin/blkid -s UUID -o value /dev/vda 2>/dev/null)" = 9f908867-3cac-45c8-8586-38166fb10f00 ] &&
+           mkdir -p /run/qrab-freeze-fixture &&
+           mount -t ext4 /dev/vda /run/qrab-freeze-fixture; then
+            echo QRAB_GUEST_FREEZE_FS_READY
+        else
+            echo QRAB_GUEST_FREEZE_FS_REFUSED >&2
+        fi
+        ;;
+esac
+# The guest agent finds org.qemu.guest_agent.0 through sysfs (no udev here)
+# and is restarted if it exits. Its log lines go to the serial console.
+if [ -x /usr/sbin/qrab-guest-agent ]; then
+    (while :; do /usr/sbin/qrab-guest-agent </dev/null; sleep 1; done) &
+    echo QRAB_GUEST_AGENT_STARTED
+fi
+# There is no udev: online vCPUs and memory blocks the host hot-adds when the
+# VM grows in place, and log each resulting guest size on the serial console. Only
+# devices that appear after boot are onlined, once each, so a CPU or memory
+# block deliberately offlined inside the guest stays offline.
+(
+    hotplug_paths() {
+        echo /sys/devices/system/cpu/cpu[0-9]*/online /sys/devices/system/memory/memory[0-9]*/state
+    }
+    seen=" $(hotplug_paths) "
+    last=
+    while :; do
+        for path in $(hotplug_paths); do
+            case "$seen" in *" $path "*) continue ;; esac
+            [ -e "$path" ] || continue
+            case "$(cat "$path" 2>/dev/null)" in
+                0) echo 1 >"$path" 2>/dev/null || continue ;;
+                offline) echo online >"$path" 2>/dev/null || continue ;;
+            esac
+            seen="$seen$path "
+        done
+        now="cpus=$(grep -c '^processor' /proc/cpuinfo) memory_kib=$(sed -n 's/^MemTotal: *\([0-9]*\) kB$/\1/p' /proc/meminfo)"
+        if [ "$now" != "$last" ]; then echo "QRAB_GUEST_RESOURCES $now"; last=$now; fi
+        sleep 1
+    done
+) &
+if [ -d /sys/firmware/efi ]; then
+    echo QRAB_UEFI_BOOTED
+fi
+if [ -c /dev/tpmrm0 ]; then
+    export TPM2TOOLS_TCTI=device:/dev/tpmrm0
+    if tpm2_getcap properties-fixed >/run/tpm-capabilities && tpm2_pcrread sha256:0,4,7,11 >/run/tpm-pcrs; then
+        echo QRAB_TPM2_READY
+        cat /run/tpm-pcrs
+    fi
+    mount -t securityfs securityfs /sys/kernel/security
+    if [ -r /sys/kernel/security/tpm0/binary_bios_measurements ] && tpm2_eventlog /sys/kernel/security/tpm0/binary_bios_measurements >/run/tpm-eventlog.yaml 2>/run/tpm-eventlog.log; then
+        echo QRAB_TPM_EVENTLOG_PRESENT
+        sha256sum /sys/kernel/security/tpm0/binary_bios_measurements
+    fi
+    if tpm2_createek -G ecc -c /run/qrab-ek.ctx -u /run/qrab-ek.pub >/run/tpm-ek.log 2>&1; then
+        printf 'QRAB_TPM_EK_SHA256='
+        sha256sum /run/qrab-ek.pub | cut -d ' ' -f 1
+        # The TPM resource manager releases this transient primary when the
+        # tool's /dev/tpmrm0 descriptor closes; only its public blob is retained.
+    fi
+fi
+if [ "$(ls /sys/class/net)" = lo ]; then echo QRAB_GUEST_NO_NIC_OK; fi
+# The fixture offers a root shell only inside this disposable VM, and QEMU has
+# no NIC.
+# USB tablet events are available through /dev/input; a graphical guest can
+# use them as an absolute pointer.
+export TERM=linux
+printf '\033[2J\033[Hqrab VM console\n\nRAM-only Linux guest. Guest networking is disabled.\n' >/dev/tty1
+printf '\n' >/dev/tty1
+trap 'poweroff -f' TERM INT
+while :; do setsid sh -c 'exec /bin/sh -i </dev/tty1 >/dev/tty1 2>&1' & wait "$!"; done
