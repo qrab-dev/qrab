@@ -1,0 +1,167 @@
+use manager::pod::{self, Config};
+use std::{path::Path, process::ExitCode};
+
+const USAGE: &str = "qrab-manager <run|ready|live|status|check> --config /path/to/vm.json
+qrab-manager control --socket /run/qrab-control/manager/control.sock < typed-operation.json
+qrab-manager inspect <inventory|metrics|network|boot|firmware|secure-boot|settings|resources|media|config> --socket /run/qrab-control/manager/control.sock
+qrab-manager agent <status|ping|freeze-status|freeze|thaw|update-status|update-trigger> --config /path/to/vm.json [ARG...]
+
+agent talks to the guest agent through the running manager's control socket
+(control_socket must be enabled). freeze takes optional mountpoints and
+update-trigger optional hook arguments.";
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> ExitCode {
+    match execute().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn execute() -> manager::Result<()> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    match args.first().map(String::as_str) {
+        Some("agent") => return agent(&args[1..]).await,
+        Some("inspect") => return inspect(&args[1..]).await,
+        Some("control") => return control(&args[1..]).await,
+        _ => {}
+    }
+    if args.len() != 3 || args[1] != "--config" {
+        return Err(manager::Error::Config(USAGE.into()));
+    }
+    let config = Config::read(Path::new(&args[2]))?;
+    match args[0].as_str() {
+        "check" => config.validate(),
+        "ready" => pod::probe(&config, true),
+        "live" => pod::probe(&config, false),
+        "status" => {
+            println!("{}", serde_json::to_string_pretty(&pod::status(&config)?)?);
+            Ok(())
+        }
+        "run" => {
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+            let mut interrupt =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+            let (_control, receiver) =
+                pod::control_channel_for(&config, pod::Deployment::from_env());
+            let outcome = pod::run_controlled(
+                config,
+                async {
+                    tokio::select! {_=term.recv()=>{},_=interrupt.recv()=>{}}
+                },
+                receiver,
+            )
+            .await;
+            let outcome = outcome?;
+            eprintln!(
+                "{}",
+                serde_json::json!({"event":"manager_exit","outcome":outcome})
+            );
+            Ok(())
+        }
+        _ => Err(manager::Error::Config(USAGE.into())),
+    }
+}
+
+async fn agent(args: &[String]) -> manager::Result<()> {
+    use pod::socket::Client;
+    if args.len() < 3 || args[1] != "--config" {
+        return Err(manager::Error::Config(USAGE.into()));
+    }
+    let config = Config::read(Path::new(&args[2]))?;
+    if !config.control_socket {
+        return Err(manager::Error::Config(
+            "agent commands need control_socket: true".into(),
+        ));
+    }
+    let extra = args[3..].to_vec();
+    let known = matches!(
+        (args[0].as_str(), extra.is_empty()),
+        (
+            "status" | "ping" | "freeze-status" | "thaw" | "update-status",
+            true
+        ) | ("freeze" | "update-trigger", _)
+    );
+    if !known {
+        return Err(manager::Error::Config(USAGE.into()));
+    }
+    let mut client = Client::connect(&pod::socket::socket_path(&config)).await?;
+    // Output is the pretty JSON of the typed result (`null` for ping).
+    let result = match args[0].as_str() {
+        "status" => serde_json::to_value(client.agent_status().await?)?,
+        "ping" => {
+            client.agent_ping().await?;
+            serde_json::Value::Null
+        }
+        "freeze-status" => serde_json::to_value(client.agent_freeze_status().await?)?,
+        "freeze" => client
+            .agent_freeze((!extra.is_empty()).then_some(extra))
+            .await?
+            .into(),
+        "thaw" => client.agent_thaw().await?.into(),
+        "update-status" => serde_json::to_value(client.agent_update_status().await?)?,
+        "update-trigger" => serde_json::to_value(client.agent_update_trigger(extra).await?)?,
+        _ => unreachable!("checked above"),
+    };
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
+}
+
+/// Fixed read-only control queries for slim images and operational verification.
+async fn inspect(args: &[String]) -> manager::Result<()> {
+    if args.len() != 3 || args[1] != "--socket" {
+        return Err(manager::Error::Config(USAGE.into()));
+    }
+    let path = Path::new(&args[2]);
+    if !path.is_absolute() {
+        return Err(manager::Error::Config("--socket must be absolute".into()));
+    }
+    let mut client = pod::socket::Client::connect(path).await?;
+    let value = match args[0].as_str() {
+        "inventory" => serde_json::to_value(client.inventory().await?)?,
+        "metrics" => serde_json::to_value(client.metrics().await?)?,
+        "network" => serde_json::to_value(client.agent_network().await?)?,
+        "boot" => serde_json::to_value(client.agent_boot().await?)?,
+        "firmware" => serde_json::to_value(client.agent_firmware().await?)?,
+        "secure-boot" => serde_json::to_value(client.agent_secure_boot_databases().await?)?,
+        "settings" => serde_json::to_value(client.secure_boot_settings().await?)?,
+        "resources" => serde_json::to_value(client.resource_usage().await?)?,
+        "media" => serde_json::to_value(client.media(pod::MediaOperation::Status).await?)?,
+        "config" => serde_json::to_value(client.config(true).await?)?,
+        _ => return Err(manager::Error::Config(USAGE.into())),
+    };
+    println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+/// Read one bounded typed control operation from stdin; no shell/raw QMP API.
+async fn control(args: &[String]) -> manager::Result<()> {
+    use std::io::Read;
+    if args.len() != 2 || args[0] != "--socket" || !Path::new(&args[1]).is_absolute() {
+        return Err(manager::Error::Config(USAGE.into()));
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .take(pod::socket::MAX_REQUEST as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > pod::socket::MAX_REQUEST {
+        return Err(manager::Error::Config(
+            "control request exceeds bound".into(),
+        ));
+    }
+    let operation: pod::socket::Operation = serde_json::from_slice(&bytes)?;
+    let mut client = pod::socket::Client::connect(Path::new(&args[1])).await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&client.request_json(operation).await?)?
+    );
+    Ok(())
+}
